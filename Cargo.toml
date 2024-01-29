@@ -1,0 +1,17 @@
+[package]
+name = "dbus-addr"
+version = "0.1.0"
+description = "D-Bus address parsing"
+authors = ["Marc-André Lureau <marcandre.lureau@redhat.com>", "The zbus developers"]
+repository = "https://github.com/elmarco/dbus-addr"
+documentation = "https://docs.rs/dbus-addr/latest/dbus-addr/"
+keywords = ["dbus", "parser"]
+edition = "2021"
+license = "MIT"
+
+[features]
+vsock = []
+
+[dependencies]
+nix = { version = "0.27.1", features = [ "user" ] }
+thiserror = "1.0.56"
