@@ -44,6 +44,7 @@ pub enum Error {
     #[error("Missing value for key: `{0}`")]
     MissingValue(String),
 
+    #[deprecated]
     #[error("Invalid value for key: `{0}`")]
     InvalidKey(String),
 

@@ -95,7 +95,7 @@ impl<'a> TryFrom<&'a DBusAddr<'a>> for Tcp<'a> {
                     res.port = Some(
                         decode_percents_str(v)?
                             .parse()
-                            .map_err(|_| Error::InvalidKey("port".into()))?,
+                            .map_err(|_| Error::InvalidValue("port".into()))?,
                     );
                 }
                 ("family", Some(v)) => {

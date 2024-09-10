@@ -47,7 +47,7 @@ impl<'a> TryFrom<&'a DBusAddr<'a>> for Unixexec<'a> {
                     path = Some(decode_percents_os_str(v)?);
                 }
                 (k, Some(v)) if k.starts_with("argv") => {
-                    let n: usize = k[4..].parse().map_err(|_| Error::InvalidKey(k.into()))?;
+                    let n: usize = k[4..].parse().map_err(|_| Error::InvalidValue(k.into()))?;
                     let arg = decode_percents_str(v)?;
                     argv.push((n, arg));
                 }
