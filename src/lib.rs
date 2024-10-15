@@ -1,26 +1,4 @@
-//! D-Bus address handling.
-//!
-//! Server addresses consist of a transport name followed by a colon, and then an optional,
-//! comma-separated list of keys and values in the form key=value.
-//!
-//! # Miscellaneous and caveats on D-Bus addresses
-//!
-//! * Assumes values are UTF-8 encoded.
-//!
-//! * Duplicated keys are accepted, last pair wins.
-//!
-//! * Assumes that empty `key=val` is accepted, so `transport:,,guid=...` is valid.
-//!
-//! * Allows key only, so `transport:foo,bar` is ok.
-//!
-//! * Accept unknown keys and transports.
-//!
-//! See also:
-//!
-//! * [Server addresses] in the D-Bus specification.
-//!
-//! [Server addresses]: https://dbus.freedesktop.org/doc/dbus-specification.html#addresses
-
+#![doc = include_str!("../README.md")]
 use std::{env, fmt};
 
 pub mod transport;
