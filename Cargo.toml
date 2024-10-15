@@ -11,7 +11,3 @@ license = "MIT"
 
 [features]
 vsock = []
-
-[dependencies]
-nix = { version = "0.29", features = [ "user" ] }
-thiserror = "1.0"

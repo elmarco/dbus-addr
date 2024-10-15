@@ -23,9 +23,6 @@
 
 use std::{env, fmt};
 
-#[cfg(all(unix, not(target_os = "macos")))]
-use nix::unistd::Uid;
-
 pub mod transport;
 
 mod address;
@@ -92,8 +89,13 @@ pub fn session() -> Result<DBusAddrList<'static>> {
 
             #[cfg(all(unix, not(target_os = "macos")))]
             {
+                #[link(name = "c")]
+                extern "C" {
+                    fn geteuid() -> u32;
+                }
+
                 let runtime_dir = env::var("XDG_RUNTIME_DIR")
-                    .unwrap_or_else(|_| format!("/run/user/{}", Uid::effective()));
+                    .unwrap_or_else(|_| format!("/run/user/{}", unsafe { geteuid() }));
                 let path = format!("unix:path={runtime_dir}/bus");
 
                 DBusAddrList::try_from(path)
