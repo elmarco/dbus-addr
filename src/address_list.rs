@@ -1,7 +1,6 @@
 use std::{borrow::Cow, fmt};
 
-use super::{DBusAddr, ToDBusAddrs};
-use crate::{Error, Result};
+use super::{DBusAddr, Error, OwnedDBusAddr, Result, ToDBusAddrs, ToOwnedDBusAddrs};
 
 /// A bus address list.
 ///
@@ -35,6 +34,7 @@ impl<'a> Iterator for DBusAddrListIter<'a> {
         } else {
             self.next_index = self.data.len();
         }
+
         Some(DBusAddr::try_from(addr))
     }
 }
@@ -77,5 +77,49 @@ impl<'a> TryFrom<&'a str> for DBusAddrList<'a> {
 impl fmt::Display for DBusAddrList<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.addr)
+    }
+}
+
+/// An iterator of D-Bus addresses.
+pub struct OwnedDBusAddrListIter<'a> {
+    data: &'a str,
+    next_index: usize,
+}
+
+impl<'a> ToOwnedDBusAddrs<'a> for DBusAddrList<'a> {
+    type Iter = OwnedDBusAddrListIter<'a>;
+
+    /// Get an iterator over the D-Bus addresses.
+    fn to_owned_dbus_addrs(&'a self) -> Self::Iter {
+        OwnedDBusAddrListIter::new(self)
+    }
+}
+
+impl<'a> OwnedDBusAddrListIter<'a> {
+    fn new(list: &'a DBusAddrList<'_>) -> Self {
+        Self {
+            data: list.addr.as_ref(),
+            next_index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for OwnedDBusAddrListIter<'a> {
+    type Item = Result<OwnedDBusAddr>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_index >= self.data.len() {
+            return None;
+        }
+
+        let mut addr = &self.data[self.next_index..];
+        if let Some(end) = addr.find(';') {
+            addr = &addr[..end];
+            self.next_index += end + 1;
+        } else {
+            self.next_index = self.data.len();
+        }
+
+        Some(OwnedDBusAddr::try_from(addr))
     }
 }

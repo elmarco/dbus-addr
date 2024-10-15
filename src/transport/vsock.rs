@@ -1,10 +1,9 @@
 use std::marker::PhantomData;
 
-use super::{percent::decode_percents_str, DBusAddr, KeyValFmt, KeyValFmtAdd};
-use crate::{Error, Result};
+use super::{percent::decode_percents_str, DBusAddr, Error, KeyValFmt, Result, TransportImpl};
 
 /// `vsock:` D-Bus transport.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vsock<'a> {
     // no cid means ANY
     cid: Option<u32>,
@@ -24,12 +23,19 @@ impl<'a> Vsock<'a> {
     pub fn cid(&self) -> Option<u32> {
         self.cid
     }
+
+    /// Convert into owned version, with 'static lifetime.
+    pub fn into_owned(self) -> Vsock<'static> {
+        Vsock {
+            cid: self.cid,
+            port: self.port,
+            phantom: PhantomData,
+        }
+    }
 }
 
-impl<'a> TryFrom<&'a DBusAddr<'a>> for Vsock<'a> {
-    type Error = Error;
-
-    fn try_from(s: &'a DBusAddr<'a>) -> Result<Self> {
+impl<'a> TransportImpl<'a> for Vsock<'a> {
+    fn for_address(s: &'a DBusAddr<'a>) -> Result<Self> {
         let mut port = None;
         let mut cid = None;
 
@@ -59,10 +65,8 @@ impl<'a> TryFrom<&'a DBusAddr<'a>> for Vsock<'a> {
             phantom: PhantomData,
         })
     }
-}
 
-impl KeyValFmtAdd for Vsock<'_> {
-    fn key_val_fmt_add<'a: 'b, 'b>(&'a self, kv: KeyValFmt<'b>) -> KeyValFmt<'b> {
+    fn fmt_key_val<'s: 'b, 'b>(&'s self, kv: KeyValFmt<'b>) -> KeyValFmt<'b> {
         kv.add("cid", self.cid()).add("port", self.port())
     }
 }

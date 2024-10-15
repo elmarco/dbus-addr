@@ -1,33 +1,33 @@
-use std::{fmt, marker::PhantomData};
+use std::marker::PhantomData;
 
-use super::{DBusAddr, KeyValFmt, KeyValFmtAdd};
-use crate::{Error, Result};
+use super::{DBusAddr, KeyValFmt, Result, TransportImpl};
 
 /// `systemd:` D-Bus transport.
-#[derive(Debug, PartialEq, Eq)]
+///
+/// <https://dbus.freedesktop.org/doc/dbus-specification.html#transports-systemd>
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Systemd<'a> {
     // use a phantom lifetime for eventually future fields and consistency
     phantom: PhantomData<&'a ()>,
 }
 
-impl<'a> TryFrom<&'a DBusAddr<'a>> for Systemd<'a> {
-    type Error = Error;
+impl<'a> Systemd<'a> {
+    /// Convert into owned version, with 'static lifetime.
+    pub fn into_owned(&self) -> Systemd<'static> {
+        Systemd {
+            phantom: PhantomData,
+        }
+    }
+}
 
-    fn try_from(_s: &'a DBusAddr<'a>) -> Result<Self> {
+impl<'a> TransportImpl<'a> for Systemd<'a> {
+    fn for_address(_addr: &'a DBusAddr<'a>) -> Result<Self> {
         Ok(Systemd {
             phantom: PhantomData,
         })
     }
-}
 
-impl<'a> fmt::Display for Systemd<'a> {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
-    }
-}
-
-impl KeyValFmtAdd for Systemd<'_> {
-    fn key_val_fmt_add<'a: 'b, 'b>(&'a self, kv: KeyValFmt<'b>) -> KeyValFmt<'b> {
+    fn fmt_key_val<'s: 'b, 'b>(&'s self, kv: KeyValFmt<'b>) -> KeyValFmt<'b> {
         kv
     }
 }

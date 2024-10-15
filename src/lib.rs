@@ -3,60 +3,78 @@
 //! Server addresses consist of a transport name followed by a colon, and then an optional,
 //! comma-separated list of keys and values in the form key=value.
 //!
+//! # Miscellaneous and caveats on D-Bus addresses
+//!
+//! * Assumes values are UTF-8 encoded.
+//!
+//! * Duplicated keys are accepted, last pair wins.
+//!
+//! * Assumes that empty `key=val` is accepted, so `transport:,,guid=...` is valid.
+//!
+//! * Allows key only, so `transport:foo,bar` is ok.
+//!
+//! * Accept unknown keys and transports.
+//!
 //! See also:
 //!
 //! * [Server addresses] in the D-Bus specification.
 //!
 //! [Server addresses]: https://dbus.freedesktop.org/doc/dbus-specification.html#addresses
 
-use std::env;
+use std::{env, fmt};
 
 #[cfg(all(unix, not(target_os = "macos")))]
 use nix::unistd::Uid;
-use thiserror::Error;
 
 pub mod transport;
 
 mod address;
 pub use address::{DBusAddr, ToDBusAddrs};
 
+mod owned_address;
+pub use owned_address::{OwnedDBusAddr, ToOwnedDBusAddrs};
+
 mod address_list;
-pub use address_list::{DBusAddrList, DBusAddrListIter};
+pub use address_list::{DBusAddrList, DBusAddrListIter, OwnedDBusAddrListIter};
 
 mod percent;
 pub use percent::*;
 
+mod guid;
+pub use guid::Guid;
+
+#[cfg(test)]
+mod tests;
+
 /// Error returned when an address is invalid.
-#[derive(Error, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Error {
-    #[error("Missing transport in address")]
     MissingTransport,
-
-    #[error("Encoding error: {0}")]
     Encoding(String),
-
-    #[error("Duplicate key: `{0}`")]
     DuplicateKey(String),
-
-    #[error("Missing key: `{0}`")]
     MissingKey(String),
-
-    #[error("Missing value for key: `{0}`")]
     MissingValue(String),
-
-    #[deprecated]
-    #[error("Invalid value for key: `{0}`")]
-    InvalidKey(String),
-
-    #[error("Invalid value for key: `{0}`")]
     InvalidValue(String),
-
-    #[error("Unknown TCP address family: `{0}`")]
     UnknownTcpFamily(String),
-
-    #[error("Other error: {0}")]
     Other(String),
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::MissingTransport => write!(f, "Missing transport in address"),
+            Error::Encoding(e) => write!(f, "Encoding error: {e}"),
+            Error::DuplicateKey(e) => write!(f, "Duplicate key: `{e}`"),
+            Error::MissingKey(e) => write!(f, "Missing key: `{e}`"),
+            Error::MissingValue(e) => write!(f, "Missing value for key: `{e}`"),
+            Error::InvalidValue(e) => write!(f, "Invalid value for key: `{e}`"),
+            Error::UnknownTcpFamily(e) => write!(f, "Unknown TCP address family: `{e}`"),
+            Error::Other(e) => write!(f, "Other error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -69,7 +87,7 @@ pub fn session() -> Result<DBusAddrList<'static>> {
         _ => {
             #[cfg(windows)]
             {
-                return DBusAddrList::try_from("autolaunch:scope=*user;autolaunch:");
+                DBusAddrList::try_from("autolaunch:scope=*user;autolaunch:")
             }
 
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -82,7 +100,9 @@ pub fn session() -> Result<DBusAddrList<'static>> {
             }
 
             #[cfg(target_os = "macos")]
-            return DBusAddrList::try_from("launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET");
+            {
+                DBusAddrList::try_from("launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET")
+            }
         }
     }
 }
@@ -106,192 +126,81 @@ pub fn system() -> Result<DBusAddrList<'static>> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{borrow::Cow, ffi::OsStr};
+struct KeyValIter<'a> {
+    data: &'a str,
+    next_index: usize,
+}
 
-    use super::{
-        transport::{Transport, UnixAddrKind},
-        DBusAddr,
-    };
-    use crate::transport::{AutolaunchScope, TcpFamily};
+impl<'a> KeyValIter<'a> {
+    fn new(data: &'a str) -> Self {
+        KeyValIter {
+            data,
+            next_index: 0,
+        }
+    }
+}
 
-    #[test]
-    fn parse_err() {
-        assert_eq!(
-            DBusAddr::try_from("").unwrap_err().to_string(),
-            "Missing transport in address"
-        );
-        assert_eq!(
-            DBusAddr::try_from("foo").unwrap_err().to_string(),
-            "Missing transport in address"
-        );
-        DBusAddr::try_from("foo:opt").unwrap();
-        assert_eq!(
-            DBusAddr::try_from("foo:opt=1,opt=2")
-                .unwrap_err()
-                .to_string(),
-            "Duplicate key: `opt`"
-        );
-        assert_eq!(
-            DBusAddr::try_from("foo:opt=%1").unwrap_err().to_string(),
-            "Encoding error: Incomplete percent-encoded sequence"
-        );
-        assert_eq!(
-            DBusAddr::try_from("foo:opt=%1z").unwrap_err().to_string(),
-            "Encoding error: Invalid hexadecimal character in percent-encoded sequence"
-        );
-        assert_eq!(
-            DBusAddr::try_from("foo:opt=1\rz").unwrap_err().to_string(),
-            "Encoding error: Invalid character in address"
-        );
-        assert_eq!(
-            DBusAddr::try_from("foo:guid=9406e28972c595c590766c9564ce623")
-                .unwrap_err()
-                .to_string(),
-            "Invalid value for key: `guid`"
-        );
-        assert_eq!(
-            DBusAddr::try_from("foo:guid=9406e28972c595c590766c9564ce623g")
-                .unwrap_err()
-                .to_string(),
-            "Invalid value for key: `guid`"
-        );
+impl<'a> Iterator for KeyValIter<'a> {
+    type Item = (&'a str, Option<&'a str>);
 
-        let addr = DBusAddr::try_from("foo:guid=9406e28972c595c590766c9564ce623f").unwrap();
-        addr.guid().unwrap();
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_index >= self.data.len() {
+            return None;
+        }
+
+        let mut pair = &self.data[self.next_index..];
+        if let Some(end) = pair.find(',') {
+            pair = &pair[..end];
+            self.next_index += end + 1;
+        } else {
+            self.next_index = self.data.len();
+        }
+        let mut split = pair.split('=');
+        // SAFETY: first split always returns something
+        let key = split.next().unwrap();
+
+        Some((key, split.next()))
+    }
+}
+
+// A structure for formatting key-value pairs.
+//
+// This struct allows for the dynamic collection and formatting of key-value pairs,
+// where keys implement `fmt::Display` and values implement `Encodable`.
+pub(crate) struct KeyValFmt<'a> {
+    fields: Vec<(Box<dyn fmt::Display + 'a>, Box<dyn Encodable + 'a>)>,
+}
+
+impl<'a> KeyValFmt<'a> {
+    fn new() -> Self {
+        Self { fields: vec![] }
     }
 
-    #[test]
-    fn parse_unix() {
-        let addr =
-            DBusAddr::try_from("unix:path=/tmp/dbus-foo,guid=9406e28972c595c590766c9564ce623f")
-                .unwrap();
-        let Transport::Unix(u) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert_eq!(
-            u.kind(),
-            &UnixAddrKind::Path(Cow::Borrowed(OsStr::new("/tmp/dbus-foo")))
-        );
+    pub(crate) fn add<K, V>(mut self, key: K, val: Option<V>) -> Self
+    where
+        K: fmt::Display + 'a,
+        V: Encodable + 'a,
+    {
+        if let Some(val) = val {
+            self.fields.push((Box::new(key), Box::new(val)));
+        }
 
-        assert_eq!(
-            DBusAddr::try_from("unix:foo=blah").unwrap_err().to_string(),
-            "Other error: invalid `unix:` address, missing required key"
-        );
-        assert_eq!(
-            DBusAddr::try_from("unix:path=/blah,abstract=foo")
-                .unwrap_err()
-                .to_string(),
-            "Other error: invalid address, only one of `path` `dir` `tmpdir` `abstract` or `runtime` expected"
-        );
-        assert_eq!(
-            DBusAddr::try_from("unix:runtime=no")
-                .unwrap_err()
-                .to_string(),
-            "Invalid value for key: `runtime`"
-        );
-        DBusAddr::try_from(String::from("unix:path=/tmp/foo")).unwrap();
+        self
     }
+}
 
-    #[test]
-    fn parse_launchd() {
-        let addr = DBusAddr::try_from("launchd:env=FOOBAR").unwrap();
-        let Transport::Launchd(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert_eq!(t.env(), "FOOBAR");
+impl fmt::Display for KeyValFmt<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for (k, v) in self.fields.iter() {
+            if !first {
+                write!(f, ",")?;
+            }
+            write!(f, "{k}=")?;
+            v.encode(f)?;
+            first = false;
+        }
 
-        assert_eq!(
-            DBusAddr::try_from("launchd:weof").unwrap_err().to_string(),
-            "Missing key: `env`"
-        );
-    }
-
-    #[test]
-    fn parse_systemd() {
-        let addr = DBusAddr::try_from("systemd:").unwrap();
-        let Transport::Systemd(_) = addr.transport().unwrap() else {
-            panic!();
-        };
-    }
-
-    #[test]
-    fn parse_tcp() {
-        let addr = DBusAddr::try_from("tcp:host=localhost,bind=*,port=0,family=ipv4").unwrap();
-        let Transport::Tcp(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert_eq!(t.host().unwrap(), "localhost");
-        assert_eq!(t.bind().unwrap(), "*");
-        assert_eq!(t.port().unwrap(), 0);
-        assert_eq!(t.family().unwrap(), TcpFamily::IPv4);
-
-        let addr = DBusAddr::try_from("tcp:").unwrap();
-        let Transport::Tcp(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert!(t.host().is_none());
-        assert!(t.bind().is_none());
-        assert!(t.port().is_none());
-        assert!(t.family().is_none());
-    }
-
-    #[test]
-    fn parse_nonce_tcp() {
-        let addr =
-            DBusAddr::try_from("nonce-tcp:host=localhost,bind=*,port=0,family=ipv6,noncefile=foo")
-                .unwrap();
-        let Transport::NonceTcp(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert_eq!(t.host().unwrap(), "localhost");
-        assert_eq!(t.bind().unwrap(), "*");
-        assert_eq!(t.port().unwrap(), 0);
-        assert_eq!(t.family().unwrap(), TcpFamily::IPv6);
-        assert_eq!(t.noncefile().unwrap(), "foo");
-    }
-
-    #[test]
-    fn parse_unixexec() {
-        let addr = DBusAddr::try_from("unixexec:path=/bin/test,argv2=foo").unwrap();
-        let Transport::Unixexec(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-
-        assert_eq!(t.path(), "/bin/test");
-        assert_eq!(t.argv(), &[(2, Cow::from("foo"))]);
-
-        assert_eq!(
-            DBusAddr::try_from("unixexec:weof").unwrap_err().to_string(),
-            "Missing key: `path`"
-        );
-    }
-
-    #[test]
-    fn parse_autolaunch() {
-        let addr = DBusAddr::try_from("autolaunch:scope=*user").unwrap();
-        let Transport::Autolaunch(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert_eq!(t.scope().unwrap(), &AutolaunchScope::User);
-    }
-
-    #[test]
-    #[cfg(feature = "vsock")]
-    fn parse_vsock() {
-        let addr = DBusAddr::try_from("vsock:cid=12,port=32").unwrap();
-        let Transport::Vsock(t) = addr.transport().unwrap() else {
-            panic!();
-        };
-        assert_eq!(t.port(), Some(32));
-        assert_eq!(t.cid(), Some(12));
-
-        assert_eq!(
-            DBusAddr::try_from("vsock:port=abc")
-                .unwrap_err()
-                .to_string(),
-            "Invalid value for key: `port`"
-        );
+        Ok(())
     }
 }
